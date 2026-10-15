@@ -1,0 +1,441 @@
+
+document.addEventListener("DOMContentLoaded", () => {
+  const $ = (id) => document.getElementById(id);
+
+  const EMPLOYEE_KEY = "paydesk_employees_v3";
+  const ADMIN_KEY = "paydesk_admins_v3";
+
+  function loadData(key, fallback) {
+    try {
+      const data = JSON.parse(localStorage.getItem(key));
+      return Array.isArray(data) ? data : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  let employees = loadData(EMPLOYEE_KEY, []);
+  let admins = loadData(ADMIN_KEY, []);
+
+  if (!admins.some((admin) => admin.username === "admin")) {
+    admins.unshift({ username: "admin", password: "admin123" });
+    saveAdmins();
+  }
+
+  function saveEmployees() {
+    localStorage.setItem(EMPLOYEE_KEY, JSON.stringify(employees));
+  }
+
+  function saveAdmins() {
+    localStorage.setItem(ADMIN_KEY, JSON.stringify(admins));
+  }
+
+  function rupiah(value) {
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0
+    }).format(value);
+  }
+
+  function calculateSalary(employee) {
+    const years = Number(employee.workYears) || 0;
+    const children = Number(employee.children) || 0;
+
+    let base = 3000000;
+    if (years >= 11 && years <= 15) base = 4500000;
+    if (years > 15) base = 6000000;
+
+    const workAllowance = years < 15 ? 150000 : 300000;
+    const childAllowance = children >= 3 ? base * 0.07 : 0;
+    const premium = base * 0.03;
+    const gross = base + workAllowance + childAllowance + premium;
+    const tax = gross * 0.03;
+    const net = gross - tax;
+
+    return {
+      base,
+      workAllowance,
+      childAllowance,
+      premium,
+      gross,
+      tax,
+      net
+    };
+  }
+
+  function sortedEmployees() {
+    return [...employees].sort((a, b) =>
+      a.name.localeCompare(b.name, "id", { sensitivity: "base" })
+    );
+  }
+
+  function showMessage(id, message, error = false) {
+    $(id).textContent = message;
+    $(id).classList.toggle("error", error);
+  }
+
+  function safeText(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[char]);
+  }
+
+  function login(username) {
+    $("loginPage").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("currentAdmin").textContent = username;
+    renderAll();
+  }
+
+  $("loginForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const username = $("username").value.trim();
+    const password = $("password").value;
+
+    const account = admins.find(
+      (admin) => admin.username === username && admin.password === password
+    );
+
+    if (!account) {
+      showMessage("loginMessage", "Username atau password salah.", true);
+      return;
+    }
+
+    showMessage("loginMessage", "");
+    login(account.username);
+  });
+
+  $("logoutBtn").addEventListener("click", () => {
+    $("app").classList.add("hidden");
+    $("loginPage").classList.remove("hidden");
+    $("loginForm").reset();
+    showMessage("loginMessage", "");
+  });
+
+  const pageNames = {
+    dashboard: "Dashboard",
+    employees: "Data Karyawan",
+    payroll: "Penggajian",
+    settings: "Kelola Admin"
+  };
+
+  document.querySelectorAll(".nav-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const page = button.dataset.page;
+
+      document.querySelectorAll(".page").forEach((section) => {
+        section.classList.add("hidden");
+      });
+
+      $("page-" + page).classList.remove("hidden");
+
+      document.querySelectorAll(".nav-btn").forEach((item) => {
+        item.classList.toggle("active", item === button);
+      });
+
+      $("pageTitle").textContent = pageNames[page];
+      renderAll();
+    });
+  });
+
+  function renderDashboard() {
+    const list = sortedEmployees();
+
+    $("statEmployees").textContent = list.length;
+    $("statAdmins").textContent = admins.length;
+
+    const total = list.reduce(
+      (sum, employee) => sum + calculateSalary(employee).net,
+      0
+    );
+
+    $("statSalary").textContent = rupiah(total);
+
+    $("dashboardTable").innerHTML = list.length
+      ? list.map((employee) => {
+          const salary = calculateSalary(employee);
+          return `
+            <tr>
+              <td>${safeText(employee.name)}</td>
+              <td>${safeText(employee.education)}</td>
+              <td>${employee.workYears} tahun</td>
+              <td>${rupiah(salary.net)}</td>
+            </tr>`;
+        }).join("")
+      : '<tr><td colspan="4">Belum ada data karyawan.</td></tr>';
+  }
+
+  function renderEmployees() {
+    const query = $("searchEmployee").value.trim().toLocaleLowerCase("id");
+    const list = sortedEmployees().filter((employee) =>
+      employee.name.toLocaleLowerCase("id").includes(query)
+    );
+
+    $("employeeTable").innerHTML = list.length
+      ? list.map((employee, index) => {
+          const salary = calculateSalary(employee);
+
+          return `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${safeText(employee.name)}</td>
+              <td>${safeText(employee.education)}</td>
+              <td>${employee.workYears} tahun</td>
+              <td>${employee.children}</td>
+              <td>${rupiah(salary.net)}</td>
+              <td>
+                <button class="action-btn edit-btn" data-edit="${employee.id}">Edit</button>
+                <button class="action-btn delete-btn" data-delete="${employee.id}">Hapus</button>
+              </td>
+            </tr>`;
+        }).join("")
+      : '<tr><td colspan="7">Data karyawan tidak ditemukan.</td></tr>';
+  }
+
+  function renderPayroll() {
+    const list = sortedEmployees();
+
+    $("payrollTable").innerHTML = list.length
+      ? list.map((employee, index) => {
+          const salary = calculateSalary(employee);
+
+          return `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${safeText(employee.name)}</td>
+              <td>${rupiah(salary.base)}</td>
+              <td>${rupiah(salary.workAllowance)}</td>
+              <td>${rupiah(salary.childAllowance)}</td>
+              <td>${rupiah(salary.premium)}</td>
+              <td>${rupiah(salary.gross)}</td>
+              <td>${rupiah(salary.tax)}</td>
+              <td><strong>${rupiah(salary.net)}</strong></td>
+            </tr>`;
+        }).join("")
+      : '<tr><td colspan="9">Belum ada data penggajian.</td></tr>';
+
+    const total = list.reduce(
+      (sum, employee) => sum + calculateSalary(employee).net,
+      0
+    );
+
+    $("payrollTotal").textContent = "Total Gaji Bersih: " + rupiah(total);
+  }
+
+  function renderAdmins() {
+    $("adminTable").innerHTML = admins.map((admin, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${safeText(admin.username)}</td>
+        <td>
+          ${admin.username === "admin"
+            ? "<span>Akun utama</span>"
+            : `<button class="action-btn delete-btn" data-remove-admin="${safeText(admin.username)}">Hapus</button>`}
+        </td>
+      </tr>
+    `).join("");
+  }
+
+  function renderAll() {
+    renderDashboard();
+    renderEmployees();
+    renderPayroll();
+    renderAdmins();
+  }
+
+  $("employeeForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const id = $("employeeId").value;
+    const name = $("employeeName").value.trim();
+    const education = $("education").value;
+    const workYears = Number($("workYears").value);
+    const children = Number($("children").value);
+
+    if (!name || !education || workYears < 0 || children < 0) {
+      showMessage("employeeMessage", "Periksa kembali data yang dimasukkan.", true);
+      return;
+    }
+
+    const duplicate = employees.some((employee) =>
+      employee.name.toLocaleLowerCase("id") === name.toLocaleLowerCase("id") &&
+      String(employee.id) !== id
+    );
+
+    if (duplicate) {
+      showMessage("employeeMessage", "Nama karyawan tersebut sudah terdaftar.", true);
+      return;
+    }
+
+    const employee = {
+      id: id || (Date.now().toString() + Math.random().toString(16).slice(2)),
+      name,
+      education,
+      workYears,
+      children
+    };
+
+    if (id) {
+      employees = employees.map((item) => item.id === id ? employee : item);
+      showMessage("employeeMessage", "Data karyawan berhasil diperbarui.");
+    } else {
+      employees.push(employee);
+      showMessage("employeeMessage", "Karyawan berhasil ditambahkan.");
+    }
+
+    saveEmployees();
+    resetEmployeeForm();
+    renderAll();
+  });
+
+  function resetEmployeeForm() {
+    $("employeeForm").reset();
+    $("employeeId").value = "";
+    $("workYears").value = 0;
+    $("children").value = 0;
+    $("employeeFormTitle").textContent = "Tambah Karyawan";
+    $("saveEmployeeBtn").textContent = "Simpan Karyawan";
+    $("cancelEditBtn").classList.add("hidden");
+  }
+
+  $("cancelEditBtn").addEventListener("click", resetEmployeeForm);
+  $("searchEmployee").addEventListener("input", renderEmployees);
+
+  $("employeeTable").addEventListener("click", (event) => {
+    const editId = event.target.dataset.edit;
+    const deleteId = event.target.dataset.delete;
+
+    if (editId) {
+      const employee = employees.find((item) => item.id === editId);
+      if (!employee) return;
+
+      $("employeeId").value = employee.id;
+      $("employeeName").value = employee.name;
+      $("education").value = employee.education;
+      $("workYears").value = employee.workYears;
+      $("children").value = employee.children;
+      $("employeeFormTitle").textContent = "Edit Karyawan";
+      $("saveEmployeeBtn").textContent = "Simpan Perubahan";
+      $("cancelEditBtn").classList.remove("hidden");
+      showMessage("employeeMessage", "Silakan ubah data karyawan.");
+      $("employeeName").focus();
+    }
+
+    if (deleteId) {
+      const employee = employees.find((item) => item.id === deleteId);
+      if (!employee) return;
+
+      if (confirm(`Hapus data karyawan ${employee.name}?`)) {
+        employees = employees.filter((item) => item.id !== deleteId);
+        saveEmployees();
+        renderAll();
+        showMessage("employeeMessage", "Data karyawan berhasil dihapus.");
+      }
+    }
+  });
+
+  $("adminForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const username = $("newUsername").value.trim();
+    const password = $("newPassword").value;
+
+    if (username.length < 3 || password.length < 6) {
+      showMessage("adminMessage", "Username minimal 3 karakter dan password minimal 6 karakter.", true);
+      return;
+    }
+
+    if (admins.some((admin) =>
+      admin.username.toLocaleLowerCase("id") === username.toLocaleLowerCase("id")
+    )) {
+      showMessage("adminMessage", "Username sudah digunakan.", true);
+      return;
+    }
+
+    admins.push({ username, password });
+    saveAdmins();
+    $("adminForm").reset();
+    renderAdmins();
+    renderDashboard();
+    showMessage("adminMessage", "Akun admin baru berhasil dibuat.");
+  });
+
+  $("adminTable").addEventListener("click", (event) => {
+    const username = event.target.dataset.removeAdmin;
+    if (!username) return;
+
+    if (username === $("currentAdmin").textContent) {
+      showMessage("adminMessage", "Akun yang sedang digunakan tidak bisa dihapus.", true);
+      return;
+    }
+
+    if (confirm(`Hapus akun admin ${username}?`)) {
+      admins = admins.filter((admin) => admin.username !== username);
+      saveAdmins();
+      renderAdmins();
+      renderDashboard();
+      showMessage("adminMessage", "Akun admin berhasil dihapus.");
+    }
+  });
+
+  $("exportBtn").addEventListener("click", () => {
+    if (!employees.length) {
+      showMessage("exportMessage", "Tambahkan data karyawan sebelum ekspor.", true);
+      return;
+    }
+
+    if (typeof XLSX === "undefined") {
+      showMessage("exportMessage", "Library Excel tidak tersedia. Periksa koneksi internet.", true);
+      return;
+    }
+
+    const rows = sortedEmployees().map((employee, index) => {
+      const salary = calculateSalary(employee);
+
+      return {
+        "No.": index + 1,
+        "Nama Karyawan": employee.name,
+        "Pendidikan": employee.education,
+        "Masa Kerja (Tahun)": employee.workYears,
+        "Jumlah Anak": employee.children,
+        "Gaji Pokok": salary.base,
+        "Tunjangan Masa Kerja": salary.workAllowance,
+        "Tunjangan Anak": salary.childAllowance,
+        "Premi": salary.premium,
+        "Gaji Kotor": salary.gross,
+        "Pajak": salary.tax,
+        "Gaji Bersih": salary.net
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 6 }, { wch: 25 }, { wch: 16 }, { wch: 18 },
+      { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 18 },
+      { wch: 15 }, { wch: 18 }, { wch: 15 }, { wch: 18 }
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Penggajian");
+
+    // Browser akan mengunduh file Excel ke folder unduhan default.
+    XLSX.writeFile(workbook, "Laporan_Penggajian_PayDesk.xlsx");
+
+    showMessage("exportMessage", "Laporan Excel berhasil dibuat dan diunduh.");
+  });
+
+  $("todayLabel").textContent = new Date().toLocaleDateString("id-ID", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  });
+
+  renderAll();
+});
